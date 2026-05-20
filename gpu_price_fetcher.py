@@ -2,21 +2,22 @@
 gpu_price_fetcher.py
 --------------------
 Weekly GPU price tracker for neocloud research (NBIS, CRWV, IREN).
+Tracks H100, H200, B200, B300 on-demand prices across Nebius, CoreWeave, Lambda, IREN.
 
 Runs automatically every Monday via GitHub Actions. Also runnable locally:
-    pip install anthropic resend
+    pip install anthropic matplotlib
     export ANTHROPIC_API_KEY=...
-    export SENDGRID_API_KEY=...
+    export GMAIL_APP_PASSWORD=...
     export EMAIL_TO=you@example.com
-    export EMAIL_FROM=tracker@yourdomain.com
+    export EMAIL_FROM=youraddress@gmail.com
     python gpu_price_fetcher.py
 
 Outputs:
     gpu_prices.json           — full history export, paste into dashboard
-    gpu_prices_history.sqlite — append-only time-series DB
+    gpu_prices_history.sqlite — append-only time-series DB (cached in GitHub Actions)
 """
 
-import os, json, sqlite3, datetime, time, textwrap, base64, io
+import os, json, sqlite3, datetime, time, base64, io
 import anthropic
 
 # ── config ────────────────────────────────────────────────────────────────────
@@ -36,6 +37,7 @@ GPU_FAMILIES = {
     "h200": "H200",
     "b200": "B200",
     "b300": "B300",
+    "a100": "A100 80GB",
 }
 
 # ── database ──────────────────────────────────────────────────────────────────
@@ -198,8 +200,9 @@ def generate_summary(client, snapshot):
             if avg else f"{d.get('gpu_label', gk)}: no data"
         )
 
+    current_month = datetime.datetime.utcnow().strftime("%B %Y")
     prompt = (
-        "Weekly GPU pricing (neocloud on-demand, May 2026):\n"
+        f"Weekly GPU pricing (neocloud on-demand, {current_month}):\n"
         + "\n".join(lines)
         + "\n\nWrite 4 short paragraphs: (1) overall pricing environment and "
         "what the neocloud-to-floor spread signals about pricing power, "
@@ -227,6 +230,7 @@ GPU_COLORS = {
     "h200": "#0F6E56",
     "b200": "#3B6D11",
     "b300": "#7C3D8C",
+    "a100": "#854F0B",
 }
 
 PROVIDER_COLORS = {
@@ -242,8 +246,9 @@ HIST_PARAMS = {
     "h200": {"growth12m":  0.25, "vol": 0.04, "shape": "dip_rise",    "start_frac": 0.0 },
     "b200": {"growth12m":  0.06, "vol": 0.12, "shape": "spike_mar26", "start_frac": 0.0 },
     "b300": {"growth12m":  0.70, "vol": 0.18, "shape": "new_entry",   "start_frac": 0.65},
+    "a100": {"growth12m": -0.20, "vol": 0.03, "shape": "decline",     "start_frac": 0.0 },
 }
-MKT_RATIO = {"h100": 1.15, "h200": 1.20, "b200": 0.90, "b300": 1.50}
+MKT_RATIO = {"h100": 1.15, "h200": 1.20, "b200": 0.90, "b300": 1.50, "a100": 0.75}
 
 
 def _backfill(gpu_key, current_price, n_weeks):
@@ -494,7 +499,7 @@ def build_html_email(snapshot, summary, fetched_at, charts=None):
   dotted = marketplace floor &nbsp;·&nbsp; dashed left = estimated history
 </p>
 """
-        for gk in ["h100", "h200", "b200", "b300"]:
+        for gk in ["h100", "h200", "b200", "b300", "a100"]:
             if gk in charts:
                 chart_html += (
                     f"<img src='data:image/png;base64,{charts[gk]}' "
