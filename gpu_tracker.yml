@@ -5,6 +5,12 @@ on:
     - cron: "0 13 * * 1"   # Every Monday 8am ET (13:00 UTC)
   workflow_dispatch:         # Also allow manual trigger from GitHub UI
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: write
+
 jobs:
   fetch-and-email:
     runs-on: ubuntu-latest
@@ -13,6 +19,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -31,10 +39,10 @@ jobs:
 
       - name: Run GPU price fetcher
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          EMAIL_TO:           ${{ secrets.EMAIL_TO }}      # comma-separated for multiple recipients
-          EMAIL_FROM:        ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO:           ${{ secrets.EMAIL_TO }}
+          EMAIL_FROM:         ${{ secrets.EMAIL_FROM }}
         run: python gpu_price_fetcher.py
 
       - name: Save updated SQLite history to cache
@@ -44,9 +52,12 @@ jobs:
           key: gpu-history-${{ runner.os }}
 
       - name: Commit updated gpu_prices.json to repo
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name  "gpu-tracker-bot"
           git config user.email "bot@github-actions"
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
           git add gpu_prices.json
           git diff --cached --quiet || git commit -m "chore: weekly GPU price update $(date -u +%Y-%m-%d)"
           git push
