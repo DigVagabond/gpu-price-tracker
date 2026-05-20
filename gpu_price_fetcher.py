@@ -158,24 +158,31 @@ Return ONLY this JSON:
   "trend_pct_12m": <n|null>,
   "notes": "<sources used>"
 }}"""
-    try:
-        resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=800,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = "\n".join(b.text for b in resp.content if hasattr(b, "text")).strip()
-        text = text.replace("```json", "").replace("```", "").strip()
-        s, e = text.find("{"), text.rfind("}") + 1
-        if s == -1 or e == 0:
-            print(f"  ✗ {gpu_label}: no JSON in response")
-            return None
-        return json.loads(text[s:e])
-    except Exception as ex:
-        print(f"  ✗ {gpu_label}: {ex}")
-        return None
+
+    for attempt in range(3):
+        try:
+            resp = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=800,
+                tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = "\n".join(b.text for b in resp.content if hasattr(b, "text")).strip()
+            text = text.replace("```json", "").replace("```", "").strip()
+            s, e = text.find("{"), text.rfind("}") + 1
+            if s == -1 or e == 0:
+                print(f"  ✗ {gpu_label}: no JSON in response — {text[:120]}")
+                return None
+            return json.loads(text[s:e])
+        except Exception as ex:
+            if "rate_limit" in str(ex) and attempt < 2:
+                wait = 60 + attempt * 30   # 60s then 90s
+                print(f"  ⚠ Rate limit — waiting {wait}s before retry {attempt+2}/3…")
+                time.sleep(wait)
+            else:
+                print(f"  ✗ {gpu_label}: {ex}")
+                return None
 
 
 # ── Claude AI summary ─────────────────────────────────────────────────────────
@@ -300,9 +307,9 @@ def generate_charts(history_gpus, n_weeks=52):
         matplotlib.use("Agg")  # non-interactive backend, required for server
         import matplotlib.pyplot as plt
         import matplotlib.patches as mpatches
-        import numpy as np
-    except ImportError:
-        print("  ⚠ matplotlib not installed — skipping charts")
+        print("  ✓ matplotlib imported successfully")
+    except ImportError as e:
+        print(f"  ✗ matplotlib import failed: {e} — skipping charts")
         return {}
 
     # build week labels (last n_weeks Mondays ending today)
@@ -313,144 +320,130 @@ def generate_charts(history_gpus, n_weeks=52):
     charts = {}
 
     for gpu_key, meta_label in GPU_FAMILIES.items():
-        gpu_data = history_gpus.get(gpu_key)
-        if not gpu_data:
-            continue
+        try:
+            gpu_data = history_gpus.get(gpu_key)
+            if not gpu_data:
+                print(f"  ⚠ {meta_label}: no history data — skipping chart")
+                continue
 
-        # real history weeks from DB
-        real_history = gpu_data.get("history", [])  # [{week, prices, mkt_floor}]
-        n_real = len(real_history)
-        n_est  = n_weeks - n_real
+            # real history weeks from DB
+            real_history = gpu_data.get("history", [])
+            n_real = len(real_history)
+            n_est  = n_weeks - n_real
 
-        # collect providers with any real data
-        providers = [p for p, v in (gpu_data.get("neocloud") or {}).items() if v is not None]
-        if not providers:
-            continue
+            # collect providers with any real data
+            providers = [p for p, v in (gpu_data.get("neocloud") or {}).items() if v is not None]
+            if not providers:
+                print(f"  ⚠ {meta_label}: no provider prices — skipping chart")
+                continue
 
-        # ── build per-provider full series ────────────────────────────────────
-        all_series = {}
-        for prov in providers:
-            current = gpu_data["neocloud"][prov]
-            est_part  = _backfill(gpu_key, current, n_est + 1)[:n_est]
-            real_part = []
-            for wk in real_history:
-                real_part.append(wk["prices"].get(prov))
-            all_series[prov] = est_part + real_part
+            # ── build per-provider full series ────────────────────────────────
+            all_series = {}
+            for prov in providers:
+                current = gpu_data["neocloud"][prov]
+                est_part  = _backfill(gpu_key, current, n_est + 1)[:n_est]
+                real_part = [wk["prices"].get(prov) for wk in real_history]
+                all_series[prov] = est_part + real_part
 
-        # avg / lo / hi across providers per week
-        avg_s, lo_s, hi_s = [], [], []
-        for i in range(n_weeks):
-            vals = [all_series[p][i] for p in providers if all_series[p][i] is not None]
-            if vals:
-                avg_s.append(sum(vals) / len(vals))
-                lo_s.append(min(vals))
-                hi_s.append(max(vals))
+            # avg / lo / hi across providers per week
+            avg_s, lo_s, hi_s = [], [], []
+            for i in range(n_weeks):
+                vals = [all_series[p][i] for p in providers if all_series[p][i] is not None]
+                if vals:
+                    avg_s.append(sum(vals) / len(vals))
+                    lo_s.append(min(vals))
+                    hi_s.append(max(vals))
+                else:
+                    avg_s.append(None)
+                    lo_s.append(None)
+                    hi_s.append(None)
+
+            # marketplace floor series
+            current_floor = gpu_data.get("mkt_floor")
+            if current_floor:
+                ratio     = MKT_RATIO.get(gpu_key, 1.0)
+                mkt_start = current_floor / ratio
+                est_mkt   = [mkt_start + (current_floor - mkt_start) * (i / max(n_est - 1, 1))
+                             for i in range(n_est)]
+                real_mkt  = [wk.get("mkt_floor") or current_floor for wk in real_history]
+                mkt_s     = est_mkt + real_mkt
             else:
-                avg_s.append(None)
-                lo_s.append(None)
-                hi_s.append(None)
+                mkt_s = [None] * n_weeks
 
-        # marketplace floor series
-        current_floor = gpu_data.get("mkt_floor")
-        if current_floor:
-            ratio     = MKT_RATIO.get(gpu_key, 1.0)
-            mkt_start = current_floor / ratio
-            est_mkt   = [mkt_start + (current_floor - mkt_start) * (i / max(n_est - 1, 1))
-                         for i in range(n_est)]
-            real_mkt  = [wk.get("mkt_floor") or current_floor for wk in real_history]
-            mkt_s     = est_mkt + real_mkt
-        else:
-            mkt_s = [None] * n_weeks
+            # ── plot ──────────────────────────────────────────────────────────
+            color = GPU_COLORS.get(gpu_key, "#555")
+            fig, ax = plt.subplots(figsize=(6.5, 2.8))
+            fig.patch.set_facecolor("white")
+            ax.set_facecolor("#fafafa")
 
-        # ── plot ──────────────────────────────────────────────────────────────
-        color = GPU_COLORS.get(gpu_key, "#555")
-        fig, ax = plt.subplots(figsize=(6.5, 2.8))
-        fig.patch.set_facecolor("white")
-        ax.set_facecolor("#fafafa")
+            x = list(range(n_weeks))
 
-        x = list(range(n_weeks))
+            def fill_segment(start, end, alpha):
+                xs  = x[start:end]
+                los = [v if v is not None else float("nan") for v in lo_s[start:end]]
+                his = [v if v is not None else float("nan") for v in hi_s[start:end]]
+                if any(v == v for v in los):  # any non-nan
+                    ax.fill_between(xs, los, his, color=color, alpha=alpha, linewidth=0)
 
-        # shaded band (estimated = light, real = slightly stronger)
-        def fill_segment(start, end, alpha):
-            xs = x[start:end]
-            los = lo_s[start:end]
-            his = hi_s[start:end]
-            if any(v is not None for v in los):
-                los_c = [v if v is not None else float("nan") for v in los]
-                his_c = [v if v is not None else float("nan") for v in his]
-                ax.fill_between(xs, los_c, his_c, color=color, alpha=alpha, linewidth=0)
+            fill_segment(0, n_est, 0.07)
+            fill_segment(max(0, n_est - 1), n_weeks, 0.18)
 
-        fill_segment(0, n_est, 0.07)
-        fill_segment(n_est - 1, n_weeks, 0.18)
+            def plot_segment(start, end, ls, lw, alpha):
+                xs = x[start:end]
+                ys = [avg_s[i] if avg_s[i] is not None else float("nan") for i in range(start, end)]
+                ax.plot(xs, ys, color=color, linestyle=ls, linewidth=lw,
+                        alpha=alpha, solid_capstyle="round")
 
-        # avg line — estimated (dashed, faded) then real (solid)
-        def plot_segment(start, end, ls, lw, alpha, label=None):
-            xs = x[start:end]
-            ys = [avg_s[i] if avg_s[i] is not None else float("nan") for i in range(start, end)]
-            ax.plot(xs, ys, color=color, linestyle=ls, linewidth=lw,
-                    alpha=alpha, label=label, solid_capstyle="round")
+            plot_segment(0, n_est + 1, "--", 1.2, 0.45)
+            plot_segment(max(0, n_est - 1), n_weeks, "-", 2.0, 1.0)
 
-        plot_segment(0, n_est + 1, "--", 1.2, 0.45, label="Neocloud avg (est.)")
-        plot_segment(n_est - 1, n_weeks, "-", 2.0, 1.0, label="Neocloud avg (real)")
+            if n_real > 0:
+                rx = [x[n_est + j] for j, v in enumerate(avg_s[n_est:]) if v is not None]
+                ry = [v for v in avg_s[n_est:] if v is not None]
+                if rx:
+                    ax.scatter(rx, ry, color=color, s=18, zorder=5)
 
-        # real data points
-        if n_real > 0:
-            rx = x[n_est:]
-            ry = [avg_s[i] for i in range(n_est, n_weeks) if avg_s[i] is not None]
-            rx = [x[n_est + j] for j, v in enumerate(avg_s[n_est:]) if v is not None]
-            ax.scatter(rx, ry, color=color, s=18, zorder=5)
+            mkt_valid = [v for v in mkt_s if v is not None]
+            if mkt_valid:
+                mkt_plot = [v if v is not None else float("nan") for v in mkt_s]
+                ax.plot(x, mkt_plot, color="#aaa", linestyle=":", linewidth=1.3, alpha=0.8)
 
-        # marketplace floor
-        mkt_valid = [v for v in mkt_s if v is not None]
-        if mkt_valid:
-            mkt_plot = [v if v is not None else float("nan") for v in mkt_s]
-            ax.plot(x, mkt_plot, color="#aaa", linestyle=":", linewidth=1.3,
-                    alpha=0.8, label="Mkt floor (spot)")
+            if n_real > 0 and n_est > 0:
+                ax.axvline(x=n_est - 0.5, color="#ccc", linewidth=0.8, linestyle="--")
 
-        # vertical divider between estimated and real
-        if n_real > 0 and n_est > 0:
-            ax.axvline(x=n_est - 0.5, color="#ccc", linewidth=0.8, linestyle="--")
-            ax.text(n_est - 1, ax.get_ylim()[1] * 0.97, "est.",
-                    fontsize=7, color="#bbb", ha="right", va="top")
-            ax.text(n_est + 0.3, ax.get_ylim()[1] * 0.97, "real",
-                    fontsize=7, color="#888", ha="left", va="top")
+            tick_step = max(1, n_weeks // 6)
+            tick_idx  = list(range(0, n_weeks, tick_step)) + [n_weeks - 1]
+            tick_lbls = [week_dates[i].strftime("%b %d") for i in tick_idx]
+            ax.set_xticks(tick_idx)
+            ax.set_xticklabels(tick_lbls, fontsize=7, color="#888")
+            ax.yaxis.set_tick_params(labelsize=7, labelcolor="#888")
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"${v:.2f}"))
+            ax.set_ylabel("$/GPU/hr", fontsize=7, color="#888")
+            ax.set_title(meta_label, fontsize=10, fontweight="bold", color="#333", pad=6)
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.spines[["left", "bottom"]].set_color("#ddd")
+            ax.grid(axis="y", color="#eee", linewidth=0.6)
 
-        # x-axis ticks — show ~6 evenly spaced labels
-        tick_step = max(1, n_weeks // 6)
-        tick_idx  = list(range(0, n_weeks, tick_step)) + [n_weeks - 1]
-        tick_lbls = [week_dates[i].strftime("%b %d") for i in tick_idx]
-        ax.set_xticks(tick_idx)
-        ax.set_xticklabels(tick_lbls, fontsize=7, color="#888")
+            handles = [
+                mpatches.Patch(color=color, alpha=0.9, label="Neocloud avg"),
+                mpatches.Patch(color=color, alpha=0.2, label="Min/max range"),
+            ]
+            if mkt_valid:
+                handles.append(mpatches.Patch(color="#aaa", label="Mkt floor"))
+            ax.legend(handles=handles, fontsize=7, framealpha=0, loc="upper left",
+                      ncol=len(handles))
 
-        ax.yaxis.set_tick_params(labelsize=7, labelcolor="#888")
-        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"${v:.2f}"))
-        ax.set_ylabel("$/GPU/hr", fontsize=7, color="#888")
-        ax.set_title(meta_label, fontsize=10, fontweight="bold", color="#333", pad=6)
-        ax.spines[["top", "right"]].set_visible(False)
-        ax.spines[["left", "bottom"]].set_color("#ddd")
-        ax.grid(axis="y", color="#eee", linewidth=0.6)
+            plt.tight_layout(pad=0.8)
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=120, bbox_inches="tight", facecolor="white")
+            plt.close(fig)
+            buf.seek(0)
+            charts[gpu_key] = base64.b64encode(buf.read()).decode("utf-8")
+            print(f"  ✓ Chart generated for {meta_label}")
 
-        # legend
-        handles = [
-            mpatches.Patch(color=color, alpha=0.9, label="Neocloud avg"),
-            mpatches.Patch(color=color, alpha=0.2, label="Min/max range"),
-        ]
-        if mkt_valid:
-            handles.append(mpatches.Patch(color="#aaa", label="Mkt floor"))
-        ax.legend(handles=handles, fontsize=7, framealpha=0, loc="upper left",
-                  ncol=len(handles))
-
-        plt.tight_layout(pad=0.8)
-
-        # encode to base64
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=120, bbox_inches="tight",
-                    facecolor="white")
-        plt.close(fig)
-        buf.seek(0)
-        charts[gpu_key] = base64.b64encode(buf.read()).decode("utf-8")
-
-    return charts
+        except Exception as e:
+            print(f"  ✗ Chart failed for {meta_label}: {e}")
+            continue
 
 
 # ── Email via Resend ──────────────────────────────────────────────────────────
@@ -607,14 +600,17 @@ def main():
             neo  = data.get("neocloud", {})
             vals = [v for v in neo.values() if v is not None]
             avg  = sum(vals) / len(vals) if vals else None
-            print(f"  ✓ avg ${avg:.2f}/hr" if avg else "  ✓ partial data")
+            print(f"  ✓ avg ${avg:.2f}/hr" if avg else "  ✓ partial data (no prices returned)")
             for p, v in neo.items():
                 print(f"    {p:<14} {'$'+str(v)+'/hr' if v else '—'}")
             if data.get("mkt_floor"):
                 print(f"    Mkt floor      ${data['mkt_floor']:.2f}/hr spot")
         else:
             snapshot[gpu_key] = None
-        time.sleep(2)
+            print(f"  ✗ Skipping {gpu_label} — fetch returned None")
+        # pause between fetches to stay within rate limit
+        print(f"  … waiting 15s before next fetch")
+        time.sleep(15)
 
     # ── 2. append to DB ───────────────────────────────────────────────────────
     insert_rows(conn, snapshot, fetched_at)
