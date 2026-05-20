@@ -1,5 +1,30 @@
 {
-  "fetched_at": "2026-05-20T18:02:05.585403",
+  "fetched_at": "2026-05-20T18:06:53.265828",
   "mode": "history",
-  "gpus": {}
+  "gpus": {
+    "h100": {
+      "gpu": "h100",
+      "history": [
+        {
+          "week": "2026-05-18",
+          "prices": {
+            "Nebius": 2.24,
+            "CoreWeave": 6.16,
+            "Lambda": 2.99,
+            "IREN": null
+          },
+          "mkt_floor": 1.03
+        }
+      ],
+      "neocloud": {
+        "Nebius": 2.24,
+        "CoreWeave": 6.16,
+        "Lambda": 2.99,
+        "IREN": null
+      },
+      "mkt_floor": 1.03,
+      "trend_pct_12m": 25.0,
+      "notes": "Nebius mid-range estimate ($2.00\u20132.49 band); CoreWeave normalized from 8-GPU nodes; Lambda official $2.99 SXM rate; IREN has no public pricing (enterprise contracts only); Vast.ai/Spheron spot floor $1.03/hr as of May 14, 2026; 12-month trend: +25% from $3.24/hr (May 2025) to $4.06/hr (May 2026) per getdeploying.com; Sources: Spheron Blog (May 2026), IntuitionLabs H100 Rental Comparison (Nov 2025), ThunderCompute (May 2026), SynpixCloud (March 2026)."
+    }
+  }
 }
