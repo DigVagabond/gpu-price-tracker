@@ -1,5 +1,5 @@
 {
-  "fetched_at": "2026-05-20T18:29:40.371076",
+  "fetched_at": "2026-05-20T18:34:38.107562",
   "mode": "history",
   "gpus": {
     "h100": {
@@ -11,7 +11,7 @@
             "Nebius": 2.0,
             "CoreWeave": 6.16,
             "Lambda": 2.49,
-            "IREN": null
+            "IREN": 2.2
           },
           "mkt_floor": 1.03
         }
@@ -20,35 +20,11 @@
         "Nebius": 2.0,
         "CoreWeave": 6.16,
         "Lambda": 2.49,
-        "IREN": null
+        "IREN": 2.2
       },
       "mkt_floor": 1.03,
-      "trend_pct_12m": -57.0,
-      "notes": "Nebius ~$2.00 (Jun 2025 cuts, per IntuitionLabs); CoreWeave $6.16/GPU HGX (normalized from $49.24/8-GPU node, May 2026); Lambda $2.49-$2.99/hr depending on configuration (May 2026); IREN no public self-serve pricing available; Vast.ai/RunPod floor: $1.03/hr spot (Spheron report May 2026), Vast.ai on-demand ~$1.87/hr marketplace (May 2026); Trend: H100 declined from ~$7-10/hr (2023) to $2-3/hr (May 2026), approximately -57% from peak. Sources: Spheron (May 2026), IntuitionLabs (Nov 2025), CoreWeave/Lambda official (May 2026), getdeploying.com (12h ago)"
-    },
-    "h200": {
-      "gpu": "h200",
-      "history": [
-        {
-          "week": "2026-05-18",
-          "prices": {
-            "Nebius": null,
-            "CoreWeave": 6.31,
-            "Lambda": null,
-            "IREN": 2.25
-          },
-          "mkt_floor": 1.45
-        }
-      ],
-      "neocloud": {
-        "Nebius": null,
-        "CoreWeave": 6.31,
-        "Lambda": null,
-        "IREN": 2.25
-      },
-      "mkt_floor": 1.45,
-      "trend_pct_12m": 25.0,
-      "notes": "CoreWeave: $6.31/GPU/hr (8xH200 HGX, Mar 2026). IREN: $1.90\u2013$2.50 range (Mar 2026); using midpoint 2.25. Nebius: Commitment pricing $2.30/hr published, but on-demand rate not publicly listed. Lambda: H200 available custom quote only (no published on-demand rate). Vast.ai: ~$3.87/hr floor mentioned. Spot floor: $1.45/hr (GetDeploying, May 2026). 12-month trend: On-demand increased ~25% from $3.11 (May 2025) to $3.89 (May 2026) per GetDeploying. Sources: CoreWeave pricing (Q1 2026), IREN investor relations, GetDeploying (May 2026), Spheron (May 2026), various cloud provider docs."
+      "trend_pct_12m": -73.0,
+      "notes": "Nebius: $2.00/hr (post-June 2025 cut per IntuitionLabs); CoreWeave: $6.16/hr normalized from $49.24/hr 8-GPU HGX node (as of May 2026, Spheron/Thunder reports); Lambda: $2.49-$2.99/hr per GPU (SXM configuration); IREN: $1.90-$2.50/hr range, estimated $2.20 midpoint (TradingKey March 2026); Marketplace floor: Vast.ai and Spheron spot at $1.03/hr (May 2026 per Spheron Blog); 12-month trend: ~$8.00/hr in May 2025 \u2192 ~$2.20-$2.50 in May 2026 = -73% decline (per Cyfuture, SiliconData, IntuitionLabs). Sources: Spheron Blog (May 2026), IntuitionLabs (Nov 2025 / May 2026), TradingKey (March 2026), Cyfuture (March 2026), getdeploying.com, nebius.com/prices, coreweave.com/pricing, lambda.ai/pricing, TradingKey neocloud analysis."
     }
   }
 }
