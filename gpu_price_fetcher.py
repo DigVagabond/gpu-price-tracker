@@ -144,19 +144,38 @@ Primary sources: getdeploying.com, nebius.com/prices, coreweave.com/pricing, lam
 
 
 def fetch_gpu_prices(client, gpu_key, gpu_label):
-    prompt = f"""Find CURRENT {gpu_label} on-demand prices (USD/GPU/hr) for:
-Nebius, CoreWeave, Lambda Labs, IREN (Iris Energy).
-Also: current marketplace spot floor (Vast.ai or RunPod), and 12-month % price change.
+    prompt = f"""Search for the CURRENT on-demand rental price of {gpu_label} GPUs in USD per GPU per hour.
 
-Return ONLY this JSON:
+Find prices specifically from these four neocloud providers:
+- Nebius (nebius.com/prices)
+- CoreWeave (coreweave.com/pricing)
+- Lambda Labs (lambdalabs.com)
+- IREN / Iris Energy (iren.com)
+
+IMPORTANT RULES:
+- Only report prices from these exact providers. Do NOT use prices from Vast.ai, RunPod, Spheron, or any marketplace.
+- Prices must be on-demand (not spot, not reserved, not contract).
+- If a provider does not publicly list a price for {gpu_label}, set it to null.
+- Do NOT confuse the marketplace floor price with a provider price.
+
+Also find separately:
+- mkt_floor: the lowest available spot price from Vast.ai OR RunPod for {gpu_label} (this is separate from the provider prices above)
+- trend_pct_12m: approximate % change in {gpu_label} on-demand price over the last 12 months (positive = price increased)
+
+Return ONLY this JSON (no markdown, no explanation):
 {{
   "gpu": "{gpu_key}",
   "gpu_label": "{gpu_label}",
   "fetched_at": "{datetime.datetime.utcnow().isoformat()}",
-  "neocloud": {{"Nebius":<n|null>,"CoreWeave":<n|null>,"Lambda":<n|null>,"IREN":<n|null>}},
-  "mkt_floor": <n|null>,
-  "trend_pct_12m": <n|null>,
-  "notes": "<sources used>"
+  "neocloud": {{
+    "Nebius":    <number from nebius.com only, or null>,
+    "CoreWeave": <number from coreweave.com only, or null>,
+    "Lambda":    <number from lambdalabs.com only, or null>,
+    "IREN":      <number from iren.com only, or null>
+  }},
+  "mkt_floor": <lowest spot price from Vast.ai or RunPod, or null>,
+  "trend_pct_12m": <number, e.g. 25 means +25%, or null>,
+  "notes": "<list sources used for each price>"
 }}"""
 
     for attempt in range(3):
@@ -187,7 +206,41 @@ Return ONLY this JSON:
 
 # ── Claude AI summary ─────────────────────────────────────────────────────────
 
-def generate_summary(client, snapshot):
+def validate_prices(data, gpu_key):
+    """
+    Sanity-check fetched prices. Flag and nullify values that look wrong:
+    - Provider price suspiciously close to mkt_floor (within 10%) → likely bleed-through
+    - Provider price below known floor minimums
+    """
+    if not data:
+        return data
+
+    floor = data.get("mkt_floor")
+    neo   = data.get("neocloud", {})
+
+    # known rough minimums for neocloud on-demand (not spot)
+    MIN_NEOCLOUD = {"h100": 2.0, "h200": 2.5, "b200": 4.0, "b300": 3.5, "a100": 1.5}
+    min_price = MIN_NEOCLOUD.get(gpu_key, 1.0)
+
+    cleaned = {}
+    for provider, price in neo.items():
+        if price is None:
+            cleaned[provider] = None
+            continue
+        # flag if below minimum neocloud on-demand threshold
+        if price < min_price:
+            print(f"  ⚠ {provider} {gpu_key} price ${price} is below neocloud minimum ${min_price} — nullifying (likely floor bleed)")
+            cleaned[provider] = None
+            continue
+        # flag if suspiciously close to mkt_floor
+        if floor and abs(price - floor) / floor < 0.05:
+            print(f"  ⚠ {provider} {gpu_key} price ${price} matches mkt_floor ${floor} — nullifying (likely bleed-through)")
+            cleaned[provider] = None
+            continue
+        cleaned[provider] = price
+
+    data["neocloud"] = cleaned
+    return data
     lines = []
     for gk, d in snapshot.items():
         if not d:
@@ -490,7 +543,7 @@ def build_html_email(snapshot, summary, fetched_at, charts=None):
         for p in summary.split("\n\n") if p.strip()
     )
 
-    # trend chart images — one per GPU family
+    # trend chart images — referenced by CID (attached separately in send_email)
     chart_html = ""
     if charts:
         chart_html = """
@@ -503,7 +556,7 @@ def build_html_email(snapshot, summary, fetched_at, charts=None):
         for gk in ["h100", "h200", "b200", "b300", "a100"]:
             if gk in charts:
                 chart_html += (
-                    f"<img src='data:image/png;base64,{charts[gk]}' "
+                    f"<img src='cid:chart_{gk}' "
                     f"style='width:100%;max-width:620px;display:block;margin:0 0 12px;' "
                     f"alt='{GPU_FAMILIES.get(gk, gk)} price trend'/>\n"
                 )
@@ -550,7 +603,7 @@ def build_html_email(snapshot, summary, fetched_at, charts=None):
 </html>"""
 
 
-def send_email(html_body, subject):
+def send_email(html_body, subject, charts=None):
     if not GMAIL_APP_PASSWORD or not EMAIL_TO_LIST or not EMAIL_FROM:
         print("  ⚠ GMAIL_APP_PASSWORD / EMAIL_TO / EMAIL_FROM not set — skipping email.")
         return
@@ -558,18 +611,36 @@ def send_email(html_body, subject):
         import smtplib
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
+        from email.mime.image import MIMEImage
 
-        msg = MIMEMultipart("alternative")
+        # outer container
+        msg = MIMEMultipart("mixed")
         msg["Subject"] = subject
         msg["From"]    = EMAIL_FROM
         msg["To"]      = ", ".join(EMAIL_TO_LIST)
-        msg.attach(MIMEText(html_body, "html"))
+
+        # related part holds HTML + inline images
+        related = MIMEMultipart("related")
+
+        # HTML body
+        related.attach(MIMEText(html_body, "html"))
+
+        # attach each chart as a CID image
+        charts = charts or {}
+        for gk, b64_data in charts.items():
+            img_data = base64.b64decode(b64_data)
+            img = MIMEImage(img_data, "png")
+            img.add_header("Content-ID", f"<chart_{gk}>")
+            img.add_header("Content-Disposition", "inline", filename=f"chart_{gk}.png")
+            related.attach(img)
+
+        msg.attach(related)
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_FROM, GMAIL_APP_PASSWORD)
             server.sendmail(EMAIL_FROM, EMAIL_TO_LIST, msg.as_string())
 
-        print(f"  ✓ Email sent → {', '.join(EMAIL_TO_LIST)}")
+        print(f"  ✓ Email sent → {', '.join(EMAIL_TO_LIST)} ({len(charts)} charts attached)")
     except Exception as ex:
         print(f"  ✗ Email failed: {ex}")
 
@@ -596,6 +667,7 @@ def main():
         print(f"\n→ Fetching {gpu_label}…")
         data = fetch_gpu_prices(client, gpu_key, gpu_label)
         if data:
+            data = validate_prices(data, gpu_key)
             snapshot[gpu_key] = data
             neo  = data.get("neocloud", {})
             vals = [v for v in neo.values() if v is not None]
@@ -646,7 +718,7 @@ def main():
     subject   = f"GPU Price Tracker — Week of {date_str}"
     html_body = build_html_email(snapshot, summary, fetched_at, charts)
     print(f"\n→ Sending email to {', '.join(EMAIL_TO_LIST) or '(not configured)'}…")
-    send_email(html_body, subject)
+    send_email(html_body, subject, charts)
 
     # ── 6. print paste-ready JSON ─────────────────────────────────────────────
     print("\n" + "=" * 52)
