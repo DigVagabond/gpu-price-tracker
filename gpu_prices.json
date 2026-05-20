@@ -1,5 +1,5 @@
 {
-  "fetched_at": "2026-05-20T18:12:54.716302",
+  "fetched_at": "2026-05-20T18:16:00.383754",
   "mode": "history",
   "gpus": {
     "h100": {
@@ -8,23 +8,23 @@
         {
           "week": "2026-05-18",
           "prices": {
-            "Nebius": 2.49,
+            "Nebius": 2.95,
             "CoreWeave": 6.16,
-            "Lambda": 2.49,
+            "Lambda": 2.99,
             "IREN": null
           },
           "mkt_floor": 1.03
         }
       ],
       "neocloud": {
-        "Nebius": 2.49,
+        "Nebius": 2.95,
         "CoreWeave": 6.16,
-        "Lambda": 2.49,
+        "Lambda": 2.99,
         "IREN": null
       },
       "mkt_floor": 1.03,
       "trend_pct_12m": 25.0,
-      "notes": "Nebius ~$2.49/hr (per multiple May 2026 sources); CoreWeave ~$6.16/hr normalized from 8-GPU HGX nodes; Lambda ~$2.49/hr (varies by region); IREN pricing not publicly listed (company operates AI cloud but rates unavailable). Marketplace floor: Spheron spot at $1.03/hr (May 2026); RunPod spot ~$1.19/hr. Trend: On-demand pricing increased ~25% since May 2025 ($3.24\u2192$4.06/hr per getdeploying.com); broader market context shows H100 dropped 64-75% from 2024 peaks but recent Jan-May 2026 saw 10% spike due to regional supply constraints."
+      "notes": "Nebius: HGX H100 includes 16 vCPU+200GB RAM. CoreWeave: normalized from 8-GPU node pricing ($49.24/hr). Lambda: $2.99 per H100 SXM on-demand. IREN: public pricing not available; estimates $2.00\u2013$2.50/hr internal only. Marketplace floor: Spheron spot (May 2026). Trend: +25% since May 2025 per getdeploying.com. Sources: nebius.com/prices, coreweave.com/pricing, lambda.ai/pricing, spheron.network/blog/gpu-cloud-pricing-comparison-2026, getdeploying.com/gpus/nvidia-h100"
     },
     "h200": {
       "gpu": "h200",
@@ -48,7 +48,7 @@
       },
       "mkt_floor": 1.45,
       "trend_pct_12m": 25.0,
-      "notes": "Nebius: specific H200 on-demand price not extracted (premium pricing model ~28-35% above H100). CoreWeave: $6.31/GPU/hr (8-GPU cluster model). Lambda: $2.29/hr (cheapest per getflops, was ~$3.80/hr in Jan 2026). IREN: $1.90\u2013$2.50 range (mid-range ~$2.25). Marketplace floor (spot): $1.45/hr (getdeploying.com). 12-month trend: +25% since May 2025 (getdeploying: $3.11\u2192$3.89). Sources: getdeploying.com, various cloud provider analyses (Spheron, JarvisLabs, ThunderCompute); data reflects May 2026 public rates."
+      "notes": "Nebius: Pricing not publicly available (contact sales). CoreWeave: $50.44/hr \u00f7 8-GPU HGX node = $6.31/GPU/hr (May 2026, from aitooldiscovery.com & jarvislabs.ai). Lambda: $2.29/hr on-demand (getflops.ai live snapshot May 5, 2026). IREN: $2.00-$2.50 range per TradingKey analysis (Mar 2026); used midpoint $2.25/hr. Marketplace floor: GetDeploying.com reports $1.45/hr spot instance floor (4 days ago). 12-month trend: GetDeploying.com notes on-demand increased ~25% since May 2025 ($3.11\u2192$3.89/hr per GPU per their tracking). Sources: getdeploying.com, computeprices.com, jarvislabs.ai, aitooldiscovery.com, tradingkey.com, getflops.ai, Spheron Network GPU Pricing blog, ThunderCompute H200 analysis (all May 2026 data)."
     }
   }
 }
