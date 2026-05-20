@@ -4,7 +4,7 @@ gpu_price_fetcher.py
 Weekly GPU price tracker for neocloud research (NBIS, CRWV, IREN).
 
 Runs automatically every Monday via GitHub Actions. Also runnable locally:
-    pip install anthropic sendgrid
+    pip install anthropic resend
     export ANTHROPIC_API_KEY=...
     export SENDGRID_API_KEY=...
     export EMAIL_TO=you@example.com
@@ -22,7 +22,7 @@ import anthropic
 # ── config ────────────────────────────────────────────────────────────────────
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-SENDGRID_API_KEY  = os.environ.get("SENDGRID_API_KEY", "")
+RESEND_API_KEY    = os.environ.get("RESEND_API_KEY", "")
 EMAIL_TO          = os.environ.get("EMAIL_TO", "")
 EMAIL_FROM        = os.environ.get("EMAIL_FROM", "gpu-tracker@yourdomain.com")
 
@@ -220,7 +220,7 @@ def generate_summary(client, snapshot):
         return f"[Summary generation failed: {ex}]"
 
 
-# ── Email via SendGrid ────────────────────────────────────────────────────────
+# ── Email via Resend ──────────────────────────────────────────────────────────
 
 def build_html_email(snapshot, summary, fetched_at):
     date_str = datetime.datetime.fromisoformat(fetched_at).strftime("%B %d, %Y")
@@ -304,21 +304,19 @@ def build_html_email(snapshot, summary, fetched_at):
 
 
 def send_email(html_body, subject):
-    if not SENDGRID_API_KEY or not EMAIL_TO:
-        print("  ⚠ No SendGrid key or EMAIL_TO set — skipping email.")
+    if not RESEND_API_KEY or not EMAIL_TO:
+        print("  ⚠ RESEND_API_KEY or EMAIL_TO not set — skipping email.")
         return
     try:
-        import sendgrid
-        from sendgrid.helpers.mail import Mail, Content
-        sg  = sendgrid.SendGridAPIClient(api_key=SENDGRID_API_KEY)
-        msg = Mail(
-            from_email    = EMAIL_FROM,
-            to_emails     = EMAIL_TO,
-            subject       = subject,
-            html_content  = Content("text/html", html_body),
-        )
-        resp = sg.client.mail.send.post(request_body=msg.get())
-        print(f"  ✓ Email sent → {EMAIL_TO} (status {resp.status_code})")
+        import resend
+        resend.api_key = RESEND_API_KEY
+        resp = resend.Emails.send({
+            "from":    EMAIL_FROM,
+            "to":      [EMAIL_TO],
+            "subject": subject,
+            "html":    html_body,
+        })
+        print(f"  ✓ Email sent → {EMAIL_TO}  (id: {resp.get('id','?')})")
     except Exception as ex:
         print(f"  ✗ Email failed: {ex}")
 

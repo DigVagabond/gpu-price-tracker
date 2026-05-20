@@ -25,16 +25,16 @@ Go to your repo → **Settings → Secrets and variables → Actions → New rep
 Add these four secrets:
 
 | Secret name        | Value                                      |
-|--------------------|--------------------------------------------|
-| `ANTHROPIC_API_KEY`| Your Anthropic API key                     |
-| `SENDGRID_API_KEY` | Your SendGrid API key (free tier is fine)  |
-| `EMAIL_TO`         | Where to send the weekly report            |
-| `EMAIL_FROM`       | Verified sender address in SendGrid        |
+|--------------------|---------------------------------------------|
+| `ANTHROPIC_API_KEY`| Your Anthropic API key                      |
+| `RESEND_API_KEY`   | Your Resend API key (free at resend.com)    |
+| `EMAIL_TO`         | Where to send the weekly report             |
+| `EMAIL_FROM`       | Verified sender address in Resend           |
 
-**Getting a free SendGrid key:**
-1. Sign up at sendgrid.com (free tier: 100 emails/day)
-2. Settings → API Keys → Create API Key → Restricted (Mail Send only)
-3. Verify your sender email under Settings → Sender Authentication
+**Getting a free Resend key (2 minutes):**
+1. Sign up at resend.com — free tier is 3,000 emails/month, 100/day
+2. Go to API Keys → Create API Key → Full Access
+3. Go to Domains → Add a domain (or use `onboarding@resend.dev` as sender for testing)
 
 ### Step 3 — Seed the history file
 
