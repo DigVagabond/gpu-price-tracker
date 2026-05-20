@@ -211,16 +211,24 @@ def generate_summary(client, snapshot):
         "(4) one key risk or catalyst. "
         "Plain text, no markdown."
     )
-    try:
-        resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1000,
-            system="You are a GPU cloud pricing analyst covering neocloud equity research.",
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return "\n\n".join(b.text for b in resp.content if hasattr(b, "text"))
-    except Exception as ex:
-        return f"[Summary generation failed: {ex}]"
+
+    # retry up to 3 times with increasing wait on rate limit
+    for attempt in range(3):
+        try:
+            resp = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=600,
+                system="You are a GPU cloud pricing analyst covering neocloud equity research.",
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return "\n\n".join(b.text for b in resp.content if hasattr(b, "text"))
+        except Exception as ex:
+            if "rate_limit" in str(ex) and attempt < 2:
+                wait = 90 + attempt * 60   # 90s, then 150s
+                print(f"  ⚠ Rate limit hit — waiting {wait}s before retry {attempt+2}/3…")
+                time.sleep(wait)
+            else:
+                return f"[Summary generation failed: {ex}]"
 
 
 # ── Chart generation ──────────────────────────────────────────────────────────
@@ -627,8 +635,8 @@ def main():
     print(f"✓ Saved {OUTPUT_JSON}")
 
     # ── 4. generate AI summary ────────────────────────────────────────────────
-    print("\n→ Waiting 60s before summary to avoid rate limit…")
-    time.sleep(60)
+    print("\n→ Waiting 90s before summary to let rate limit window reset…")
+    time.sleep(90)
     print("→ Generating AI pricing power summary…")
     summary = generate_summary(client, snapshot)
     print("✓ Summary generated")
