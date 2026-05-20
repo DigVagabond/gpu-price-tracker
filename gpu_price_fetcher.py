@@ -22,8 +22,10 @@ import anthropic
 # ── config ────────────────────────────────────────────────────────────────────
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-RESEND_API_KEY    = os.environ.get("RESEND_API_KEY", "")
-EMAIL_TO          = os.environ.get("EMAIL_TO", "")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+# Comma-separated list of recipients, e.g. "a@x.com,b@x.com"
+EMAIL_TO_RAW      = os.environ.get("EMAIL_TO", "maxim.zhu@mlp.com")
+EMAIL_TO_LIST     = [e.strip() for e in EMAIL_TO_RAW.split(",") if e.strip()]
 EMAIL_FROM        = os.environ.get("EMAIL_FROM", "gpu-tracker@yourdomain.com")
 
 OUTPUT_JSON = "gpu_prices.json"
@@ -304,19 +306,25 @@ def build_html_email(snapshot, summary, fetched_at):
 
 
 def send_email(html_body, subject):
-    if not RESEND_API_KEY or not EMAIL_TO:
-        print("  ⚠ RESEND_API_KEY or EMAIL_TO not set — skipping email.")
+    if not GMAIL_APP_PASSWORD or not EMAIL_TO_LIST or not EMAIL_FROM:
+        print("  ⚠ GMAIL_APP_PASSWORD / EMAIL_TO / EMAIL_FROM not set — skipping email.")
         return
     try:
-        import resend
-        resend.api_key = RESEND_API_KEY
-        resp = resend.Emails.send({
-            "from":    EMAIL_FROM,
-            "to":      [EMAIL_TO],
-            "subject": subject,
-            "html":    html_body,
-        })
-        print(f"  ✓ Email sent → {EMAIL_TO}  (id: {resp.get('id','?')})")
+        import smtplib
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = EMAIL_FROM
+        msg["To"]      = ", ".join(EMAIL_TO_LIST)
+        msg.attach(MIMEText(html_body, "html"))
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(EMAIL_FROM, GMAIL_APP_PASSWORD)
+            server.sendmail(EMAIL_FROM, EMAIL_TO_LIST, msg.as_string())
+
+        print(f"  ✓ Email sent → {', '.join(EMAIL_TO_LIST)}")
     except Exception as ex:
         print(f"  ✗ Email failed: {ex}")
 
@@ -383,7 +391,7 @@ def main():
     date_str  = datetime.datetime.fromisoformat(fetched_at).strftime("%b %d, %Y")
     subject   = f"GPU Price Tracker — Week of {date_str}"
     html_body = build_html_email(snapshot, summary, fetched_at)
-    print(f"\n→ Sending email to {EMAIL_TO or '(not configured)'}…")
+    print(f"\n→ Sending email to {', '.join(EMAIL_TO_LIST) or '(not configured)'}…")
     send_email(html_body, subject)
 
     # ── 6. print paste-ready JSON ─────────────────────────────────────────────

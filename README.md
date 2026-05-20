@@ -24,17 +24,20 @@ Go to your repo → **Settings → Secrets and variables → Actions → New rep
 
 Add these four secrets:
 
-| Secret name        | Value                                      |
-|--------------------|---------------------------------------------|
-| `ANTHROPIC_API_KEY`| Your Anthropic API key                      |
-| `RESEND_API_KEY`   | Your Resend API key (free at resend.com)    |
-| `EMAIL_TO`         | Where to send the weekly report             |
-| `EMAIL_FROM`       | Verified sender address in Resend           |
+| Secret name          | Value                                         |
+|----------------------|-----------------------------------------------|
+| `ANTHROPIC_API_KEY`  | Your Anthropic API key                        |
+| `GMAIL_APP_PASSWORD` | 16-character Gmail App Password (see below)   |
+| `EMAIL_TO`           | Recipient(s) — comma-separated for multiple, e.g. `a@x.com,b@x.com` |
+| `EMAIL_FROM`         | Your Gmail address (used as sender)           |
 
-**Getting a free Resend key (2 minutes):**
-1. Sign up at resend.com — free tier is 3,000 emails/month, 100/day
-2. Go to API Keys → Create API Key → Full Access
-3. Go to Domains → Add a domain (or use `onboarding@resend.dev` as sender for testing)
+**Getting a Gmail App Password (2 minutes):**
+1. Go to **myaccount.google.com → Security → 2-Step Verification** (must be enabled first)
+2. Search for **"App passwords"** at the bottom of that page
+3. Click **Create** → name it "GPU Tracker" → copy the 16-character password
+4. Paste it as the `GMAIL_APP_PASSWORD` secret in GitHub
+
+No new service signup needed — uses Python's built-in `smtplib`, nothing to install.
 
 ### Step 3 — Seed the history file
 
