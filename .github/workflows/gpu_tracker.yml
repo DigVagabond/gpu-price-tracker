@@ -1,0 +1,52 @@
+name: GPU Price Tracker — Weekly Run
+
+on:
+  schedule:
+    - cron: "0 13 * * 1"   # Every Monday 8am ET (13:00 UTC)
+  workflow_dispatch:         # Also allow manual trigger from GitHub UI
+
+jobs:
+  fetch-and-email:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore SQLite history from cache
+        uses: actions/cache@v4
+        with:
+          path: gpu_prices_history.sqlite
+          key: gpu-history-${{ runner.os }}
+          restore-keys: gpu-history-
+
+      - name: Run GPU price fetcher
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_TO:           ${{ secrets.EMAIL_TO }}      # comma-separated for multiple recipients
+          EMAIL_FROM:        ${{ secrets.EMAIL_FROM }}
+        run: python gpu_price_fetcher.py
+
+      - name: Save updated SQLite history to cache
+        uses: actions/cache@v4
+        with:
+          path: gpu_prices_history.sqlite
+          key: gpu-history-${{ runner.os }}
+
+      - name: Commit updated gpu_prices.json to repo
+        run: |
+          git config user.name  "gpu-tracker-bot"
+          git config user.email "bot@github-actions"
+          git add gpu_prices.json
+          git diff --cached --quiet || git commit -m "chore: weekly GPU price update $(date -u +%Y-%m-%d)"
+          git push
