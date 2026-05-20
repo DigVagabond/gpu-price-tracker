@@ -159,7 +159,7 @@ Return ONLY this JSON:
 }}"""
     try:
         resp = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-haiku-4-5-20251001",
             max_tokens=800,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             system=SYSTEM_PROMPT,
@@ -212,7 +212,7 @@ def generate_summary(client, snapshot):
     )
     try:
         resp = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-haiku-4-5-20251001",
             max_tokens=1000,
             system="You are a GPU cloud pricing analyst covering neocloud equity research.",
             messages=[{"role": "user", "content": prompt}],
