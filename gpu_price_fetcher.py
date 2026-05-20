@@ -16,7 +16,7 @@ Outputs:
     gpu_prices_history.sqlite — append-only time-series DB
 """
 
-import os, json, sqlite3, datetime, time, textwrap
+import os, json, sqlite3, datetime, time, textwrap, base64, io
 import anthropic
 
 # ── config ────────────────────────────────────────────────────────────────────
@@ -36,7 +36,6 @@ GPU_FAMILIES = {
     "h200": "H200",
     "b200": "B200",
     "b300": "B300",
-    "a100": "A100 80GB",
 }
 
 # ── database ──────────────────────────────────────────────────────────────────
@@ -221,10 +220,231 @@ def generate_summary(client, snapshot):
         return f"[Summary generation failed: {ex}]"
 
 
+# ── Chart generation ──────────────────────────────────────────────────────────
+
+GPU_COLORS = {
+    "h100": "#185FA5",
+    "h200": "#0F6E56",
+    "b200": "#3B6D11",
+    "b300": "#7C3D8C",
+}
+
+PROVIDER_COLORS = {
+    "Nebius":    "#185FA5",
+    "CoreWeave": "#0F6E56",
+    "Lambda":    "#854F0B",
+    "IREN":      "#3B6D11",
+}
+
+# Historical shape params for back-filling estimated weeks
+HIST_PARAMS = {
+    "h100": {"growth12m":  0.25, "vol": 0.03, "shape": "dip_rise",    "start_frac": 0.0 },
+    "h200": {"growth12m":  0.25, "vol": 0.04, "shape": "dip_rise",    "start_frac": 0.0 },
+    "b200": {"growth12m":  0.06, "vol": 0.12, "shape": "spike_mar26", "start_frac": 0.0 },
+    "b300": {"growth12m":  0.70, "vol": 0.18, "shape": "new_entry",   "start_frac": 0.65},
+}
+MKT_RATIO = {"h100": 1.15, "h200": 1.20, "b200": 0.90, "b300": 1.50}
+
+
+def _backfill(gpu_key, current_price, n_weeks):
+    """Back-calculate estimated history from current real price."""
+    import math
+    p = HIST_PARAMS[gpu_key]
+    start_week = int(p["start_frac"] * n_weeks)
+    usable = n_weeks - start_week
+    start_val = current_price / (1 + p["growth12m"] * (usable / 52))
+    series = [None] * n_weeks
+    for i in range(start_week, n_weeks):
+        t = (i - start_week) / max(usable - 1, 1)
+        if p["shape"] == "dip_rise":
+            v = start_val + (current_price - start_val) * t + math.sin(t * math.pi) * -0.08 * start_val
+        elif p["shape"] == "spike_mar26":
+            base = start_val + (current_price - start_val) * t
+            if 0.82 < t < 0.94:
+                base += base * 0.24 * math.sin((t - 0.82) / 0.12 * math.pi)
+            v = base
+        elif p["shape"] == "new_entry":
+            v = start_val + (current_price - start_val) * (t * t)
+        else:
+            v = start_val + (current_price - start_val) * t
+        noise = math.sin(hash(gpu_key) * 7 + i * 13) * 0.5 * p["vol"] * start_val
+        series[i] = round(max(v + noise, 0.2), 2)
+    series[-1] = current_price  # pin last point to real value
+    return series
+
+
+def generate_charts(history_gpus, n_weeks=52):
+    """
+    Generate one chart per GPU family.
+    Returns dict: {gpu_key: base64_png_string}
+    Each chart shows:
+      - Shaded band: neocloud min/max range (estimated weeks faded)
+      - Solid line:  neocloud avg (estimated dashed, real solid)
+      - Dotted line: marketplace floor
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")  # non-interactive backend, required for server
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as mpatches
+        import numpy as np
+    except ImportError:
+        print("  ⚠ matplotlib not installed — skipping charts")
+        return {}
+
+    # build week labels (last n_weeks Mondays ending today)
+    today = datetime.date.today()
+    monday = today - datetime.timedelta(days=today.weekday())
+    week_dates = [monday - datetime.timedelta(weeks=n_weeks - 1 - i) for i in range(n_weeks)]
+
+    charts = {}
+
+    for gpu_key, meta_label in GPU_FAMILIES.items():
+        gpu_data = history_gpus.get(gpu_key)
+        if not gpu_data:
+            continue
+
+        # real history weeks from DB
+        real_history = gpu_data.get("history", [])  # [{week, prices, mkt_floor}]
+        n_real = len(real_history)
+        n_est  = n_weeks - n_real
+
+        # collect providers with any real data
+        providers = [p for p, v in (gpu_data.get("neocloud") or {}).items() if v is not None]
+        if not providers:
+            continue
+
+        # ── build per-provider full series ────────────────────────────────────
+        all_series = {}
+        for prov in providers:
+            current = gpu_data["neocloud"][prov]
+            est_part  = _backfill(gpu_key, current, n_est + 1)[:n_est]
+            real_part = []
+            for wk in real_history:
+                real_part.append(wk["prices"].get(prov))
+            all_series[prov] = est_part + real_part
+
+        # avg / lo / hi across providers per week
+        avg_s, lo_s, hi_s = [], [], []
+        for i in range(n_weeks):
+            vals = [all_series[p][i] for p in providers if all_series[p][i] is not None]
+            if vals:
+                avg_s.append(sum(vals) / len(vals))
+                lo_s.append(min(vals))
+                hi_s.append(max(vals))
+            else:
+                avg_s.append(None)
+                lo_s.append(None)
+                hi_s.append(None)
+
+        # marketplace floor series
+        current_floor = gpu_data.get("mkt_floor")
+        if current_floor:
+            ratio     = MKT_RATIO.get(gpu_key, 1.0)
+            mkt_start = current_floor / ratio
+            est_mkt   = [mkt_start + (current_floor - mkt_start) * (i / max(n_est - 1, 1))
+                         for i in range(n_est)]
+            real_mkt  = [wk.get("mkt_floor") or current_floor for wk in real_history]
+            mkt_s     = est_mkt + real_mkt
+        else:
+            mkt_s = [None] * n_weeks
+
+        # ── plot ──────────────────────────────────────────────────────────────
+        color = GPU_COLORS.get(gpu_key, "#555")
+        fig, ax = plt.subplots(figsize=(6.5, 2.8))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("#fafafa")
+
+        x = list(range(n_weeks))
+
+        # shaded band (estimated = light, real = slightly stronger)
+        def fill_segment(start, end, alpha):
+            xs = x[start:end]
+            los = lo_s[start:end]
+            his = hi_s[start:end]
+            if any(v is not None for v in los):
+                los_c = [v if v is not None else float("nan") for v in los]
+                his_c = [v if v is not None else float("nan") for v in his]
+                ax.fill_between(xs, los_c, his_c, color=color, alpha=alpha, linewidth=0)
+
+        fill_segment(0, n_est, 0.07)
+        fill_segment(n_est - 1, n_weeks, 0.18)
+
+        # avg line — estimated (dashed, faded) then real (solid)
+        def plot_segment(start, end, ls, lw, alpha, label=None):
+            xs = x[start:end]
+            ys = [avg_s[i] if avg_s[i] is not None else float("nan") for i in range(start, end)]
+            ax.plot(xs, ys, color=color, linestyle=ls, linewidth=lw,
+                    alpha=alpha, label=label, solid_capstyle="round")
+
+        plot_segment(0, n_est + 1, "--", 1.2, 0.45, label="Neocloud avg (est.)")
+        plot_segment(n_est - 1, n_weeks, "-", 2.0, 1.0, label="Neocloud avg (real)")
+
+        # real data points
+        if n_real > 0:
+            rx = x[n_est:]
+            ry = [avg_s[i] for i in range(n_est, n_weeks) if avg_s[i] is not None]
+            rx = [x[n_est + j] for j, v in enumerate(avg_s[n_est:]) if v is not None]
+            ax.scatter(rx, ry, color=color, s=18, zorder=5)
+
+        # marketplace floor
+        mkt_valid = [v for v in mkt_s if v is not None]
+        if mkt_valid:
+            mkt_plot = [v if v is not None else float("nan") for v in mkt_s]
+            ax.plot(x, mkt_plot, color="#aaa", linestyle=":", linewidth=1.3,
+                    alpha=0.8, label="Mkt floor (spot)")
+
+        # vertical divider between estimated and real
+        if n_real > 0 and n_est > 0:
+            ax.axvline(x=n_est - 0.5, color="#ccc", linewidth=0.8, linestyle="--")
+            ax.text(n_est - 1, ax.get_ylim()[1] * 0.97, "est.",
+                    fontsize=7, color="#bbb", ha="right", va="top")
+            ax.text(n_est + 0.3, ax.get_ylim()[1] * 0.97, "real",
+                    fontsize=7, color="#888", ha="left", va="top")
+
+        # x-axis ticks — show ~6 evenly spaced labels
+        tick_step = max(1, n_weeks // 6)
+        tick_idx  = list(range(0, n_weeks, tick_step)) + [n_weeks - 1]
+        tick_lbls = [week_dates[i].strftime("%b %d") for i in tick_idx]
+        ax.set_xticks(tick_idx)
+        ax.set_xticklabels(tick_lbls, fontsize=7, color="#888")
+
+        ax.yaxis.set_tick_params(labelsize=7, labelcolor="#888")
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"${v:.2f}"))
+        ax.set_ylabel("$/GPU/hr", fontsize=7, color="#888")
+        ax.set_title(meta_label, fontsize=10, fontweight="bold", color="#333", pad=6)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.spines[["left", "bottom"]].set_color("#ddd")
+        ax.grid(axis="y", color="#eee", linewidth=0.6)
+
+        # legend
+        handles = [
+            mpatches.Patch(color=color, alpha=0.9, label="Neocloud avg"),
+            mpatches.Patch(color=color, alpha=0.2, label="Min/max range"),
+        ]
+        if mkt_valid:
+            handles.append(mpatches.Patch(color="#aaa", label="Mkt floor"))
+        ax.legend(handles=handles, fontsize=7, framealpha=0, loc="upper left",
+                  ncol=len(handles))
+
+        plt.tight_layout(pad=0.8)
+
+        # encode to base64
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=120, bbox_inches="tight",
+                    facecolor="white")
+        plt.close(fig)
+        buf.seek(0)
+        charts[gpu_key] = base64.b64encode(buf.read()).decode("utf-8")
+
+    return charts
+
+
 # ── Email via Resend ──────────────────────────────────────────────────────────
 
-def build_html_email(snapshot, summary, fetched_at):
+def build_html_email(snapshot, summary, fetched_at, charts=None):
     date_str = datetime.datetime.fromisoformat(fetched_at).strftime("%B %d, %Y")
+    charts = charts or {}
 
     # snapshot table rows
     rows = ""
@@ -264,6 +484,24 @@ def build_html_email(snapshot, summary, fetched_at):
         for p in summary.split("\n\n") if p.strip()
     )
 
+    # trend chart images — one per GPU family
+    chart_html = ""
+    if charts:
+        chart_html = """
+<h3 style="font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#555;margin:24px 0 12px;">Price trends</h3>
+<p style="font-size:11px;color:#888;margin:0 0 16px;">
+  Solid line = neocloud avg &nbsp;·&nbsp; shaded band = min/max range &nbsp;·&nbsp;
+  dotted = marketplace floor &nbsp;·&nbsp; dashed left = estimated history
+</p>
+"""
+        for gk in ["h100", "h200", "b200", "b300"]:
+            if gk in charts:
+                chart_html += (
+                    f"<img src='data:image/png;base64,{charts[gk]}' "
+                    f"style='width:100%;max-width:620px;display:block;margin:0 0 12px;' "
+                    f"alt='{GPU_FAMILIES.get(gk, gk)} price trend'/>\n"
+                )
+
     return f"""<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
@@ -288,6 +526,8 @@ def build_html_email(snapshot, summary, fetched_at):
   </thead>
   <tbody>{rows}</tbody>
 </table>
+
+{chart_html}
 
 <h3 style="font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#555;margin:0 0 12px;">AI pricing power analysis — NBIS · CRWV · IREN</h3>
 <div style="background:#fafafa;border-left:3px solid #ddd;padding:14px 16px;margin-bottom:24px;font-size:13px;">
@@ -389,9 +629,13 @@ def main():
     print("✓ Summary generated")
 
     # ── 5. send email ─────────────────────────────────────────────────────────
+    print("\n→ Generating trend charts…")
+    charts = generate_charts(history)
+    print(f"✓ Generated {len(charts)} charts")
+
     date_str  = datetime.datetime.fromisoformat(fetched_at).strftime("%b %d, %Y")
     subject   = f"GPU Price Tracker — Week of {date_str}"
-    html_body = build_html_email(snapshot, summary, fetched_at)
+    html_body = build_html_email(snapshot, summary, fetched_at, charts)
     print(f"\n→ Sending email to {', '.join(EMAIL_TO_LIST) or '(not configured)'}…")
     send_email(html_body, subject)
 
