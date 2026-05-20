@@ -200,15 +200,14 @@ def generate_summary(client, snapshot):
         )
 
     prompt = (
-        "Weekly GPU pricing data (neocloud on-demand, May 2026):\n"
+        "Weekly GPU pricing (neocloud on-demand, May 2026):\n"
         + "\n".join(lines)
-        + "\n\nWrite a concise 4-paragraph investment-grade analysis covering: "
-        "(1) overall GPU pricing environment across all families and what the "
-        "neocloud-to-floor spread signals about pricing power, "
-        "(2) CRWV (CoreWeave) margin and pricing power implications, "
+        + "\n\nWrite 4 short paragraphs: (1) overall pricing environment and "
+        "what the neocloud-to-floor spread signals about pricing power, "
+        "(2) CRWV (CoreWeave) implications, "
         "(3) NBIS (Nebius) and IREN commentary, "
-        "(4) one forward-looking risk or catalyst. "
-        "No markdown, plain paragraphs only."
+        "(4) one key risk or catalyst. "
+        "Plain text, no markdown."
     )
     try:
         resp = client.messages.create(
@@ -383,7 +382,9 @@ def main():
     print(f"✓ Saved {OUTPUT_JSON}")
 
     # ── 4. generate AI summary ────────────────────────────────────────────────
-    print("\n→ Generating AI pricing power summary…")
+    print("\n→ Waiting 60s before summary to avoid rate limit…")
+    time.sleep(60)
+    print("→ Generating AI pricing power summary…")
     summary = generate_summary(client, snapshot)
     print("✓ Summary generated")
 
